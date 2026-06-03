@@ -4,7 +4,7 @@ hdb_dbt:
       dataset: hdb_analytics_marts   #   testing - see this is bigquery dataset: hdb_raw_data
       job_execution_timeout_seconds: 300
       job_retries: 1
-      keyfile: /mnt/c/Users/taiji/DS2026/S2_Big_Data/hdb_project/project-8d552288-1acb-4a23-893-d3611f4ad26e.json
+      keyfile:  /home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json
       location: US
       method: service-account
       priority: interactive

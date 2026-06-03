@@ -950,7 +950,7 @@ print(f"   Final Matrix Exported:    {output_path}")
 print("=====================================================================")
 
 # 2. Complete Bigquery setup and execution logic
-credentials_path = "/mnt/c/Users/taiji/DS2026/S2_Big_Data/hdb_project/project-8d552288-1acb-4a23-893-d3611f4ad26e.json"
+credentials_path = "/home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json"
 if not os.path.exists(credentials_path):
     raise FileNotFoundError(f"Missing Cloud credentials file at {credentials_path}")
 

@@ -32,7 +32,7 @@ def get_bigquery_engine():
     Establishes and caches a long-lived database engine link to Google BigQuery.
     Looks for local workspace credentials file, falls back to Streamlit Secrets in Cloud.
     """
-    credentials_path = "/mnt/c/Users/taiji/DS2026/S2_Big_Data/hdb_project/project-8d552288-1acb-4a23-893-d3611f4ad26e.json"
+    credentials_path = "/home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json"
 
     # if os.path.exists(credentials_path):
     #     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
