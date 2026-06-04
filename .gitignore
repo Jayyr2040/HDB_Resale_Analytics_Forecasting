@@ -3,6 +3,7 @@ gcp_key.json
 *.json.key
 .env
 project-8d552288-1acb-4a23-893-d3611f4ad26e.json
+project-8d552288-1acb-4a23-893-07fe8627d11f.json
 
 # --- PIPELINE MASSIVE CACHED DATASETS (Never push Parquet to Git) ---
 scripts/enriched_hdb_resale.parquet
