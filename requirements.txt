@@ -6,3 +6,4 @@
    sqlalchemy-bigquery>=1.9.0
    db-dtypes>=1.2.0
    statsmodels
+   python-dotenv
