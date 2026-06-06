@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine
 from google.oauth2 import service_account
+from dotenv import load_dotenv
 import json
 
 # =====================================================================================
@@ -32,7 +33,11 @@ def get_bigquery_engine():
     Establishes and caches a long-lived database engine link to Google BigQuery.
     Looks for local workspace credentials file, falls back to Streamlit Secrets in Cloud.
     """
-    credentials_path = "/home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json"
+    # credentials_path = "/home/geekytan/Documents/ntu_dsai/DSAI_HDB_Project/geekytan-bigquery-c5c23def44f5.json"
+    # Prefer an environment variable pointing to your service account JSON.
+    # Example: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+    load_dotenv()
+    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
     # if os.path.exists(credentials_path):
     #     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
@@ -48,9 +53,9 @@ def get_bigquery_engine():
     # return create_engine(connection_string)
 
     # 28/5 #########################################################################
-    if os.path.exists(credentials_path):
+    if credentials_path and os.path.exists(credentials_path):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
-        project_id = "project-8d552288-1acb-4a23-893" 
+        project_id = "geekytan-bigquery" 
         connection_string = f"bigquery://{project_id}/hdb_analytics_marts"
         return create_engine(connection_string)
         
@@ -225,10 +230,10 @@ with tab1:
 
 # ---- TAB 2: GEOSPATIAL PROXIMITY ANALYTICS ----
 with tab2:
-    st.subheader("Proximity Proximity Impact on Asset Capitalization")
+    st.subheader("Proximity Impact on Asset Capitalization")
     if not filtered_df.empty:
         col_left, col_right = st.columns(2)
-        
+
         with col_left:
             fig_mrt = px.scatter(
                 filtered_df, x="dist_to_closest_mrt_km", y="resale_price", color="town",
@@ -236,7 +241,7 @@ with tab2:
                 title="Valuation Variance Driven by Core Mass Rapid Transit (MRT) Proximity Grid"
             )
             st.plotly_chart(fig_mrt, use_container_width=True)
-            
+
         with col_right:
             fig_hub = px.scatter(
                 filtered_df, x="min_distance_to_regional_hub_km", y="resale_price", color="town",
@@ -244,6 +249,66 @@ with tab2:
                 title="Price Degradation Curve vs. URA Polycentric Masterplan Commercial Hub Centers"
             )
             st.plotly_chart(fig_hub, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("🏫 Primary School Proximity Analysis (MOE P1 Registration Zones)")
+        st.caption("Relevant for buyers with children under 12, or newly married couples planning to start a family.")
+
+        col_sch_left, col_sch_right = st.columns(2)
+
+        with col_sch_left:
+            fig_school_scatter = px.scatter(
+                filtered_df,
+                x="dist_to_closest_primary_school_km",
+                y="resale_price",
+                color="town",
+                trendline="ols",
+                hover_data=["flat_type", "remaining_lease_years"],
+                labels={
+                    "dist_to_closest_primary_school_km": "Distance to Closest Primary School (km)",
+                    "resale_price": "Resale Price ($)"
+                },
+                title="Resale Price vs. Distance to Closest Primary School"
+            )
+            st.plotly_chart(fig_school_scatter, use_container_width=True)
+
+        with col_sch_right:
+            # Bin by distance into MOE P1 priority zone bands
+            def school_distance_band(d):
+                if d < 0.5:
+                    return "< 0.5 km"
+                elif d < 1.0:
+                    return "0.5 – 1 km"
+                elif d < 2.0:
+                    return "1 – 2 km"
+                else:
+                    return "> 2 km"
+
+            school_df = filtered_df.copy()
+            school_df["school_distance_band"] = school_df["dist_to_closest_primary_school_km"].apply(school_distance_band)
+
+            band_order = ["< 0.5 km", "0.5 – 1 km", "1 – 2 km", "> 2 km"]
+            school_band_summary = (
+                school_df.groupby("school_distance_band")["resale_price"]
+                .mean()
+                .reindex(band_order)
+                .reset_index()
+            )
+            school_band_summary.columns = ["Distance to Closest Primary School", "Average Resale Price ($)"]
+
+            fig_school_bar = px.bar(
+                school_band_summary,
+                x="Distance to Closest Primary School",
+                y="Average Resale Price ($)",
+                text_auto=".2s",
+                color="Distance to Closest Primary School",
+                color_discrete_sequence=px.colors.sequential.Greens_r[1:5],
+                title="Average Resale Price by MOE P1 Priority Distance Band"
+            )
+            fig_school_bar.update_traces(textposition="outside")
+            fig_school_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_school_bar, use_container_width=True)
+
     else:
         st.caption("No vector parameters to isolate.")
 
