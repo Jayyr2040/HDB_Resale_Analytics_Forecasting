@@ -55,7 +55,7 @@ def get_bigquery_engine():
     # 28/5 #########################################################################
     if credentials_path and os.path.exists(credentials_path):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
-        project_id = "geekytan-bigquery" 
+        project_id = os.getenv("GOOGLE_PROJECT_ID")
         connection_string = f"bigquery://{project_id}/hdb_analytics_marts"
         return create_engine(connection_string)
         
@@ -251,7 +251,7 @@ with tab2:
             st.plotly_chart(fig_hub, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🏫 Primary School Proximity Analysis (MOE P1 Registration Zones)")
+        st.subheader("Primary School Proximity Analysis (MOE P1 Registration Zones)")
         st.caption("Relevant for buyers with children under 12, or newly married couples planning to start a family.")
 
         col_sch_left, col_sch_right = st.columns(2)
