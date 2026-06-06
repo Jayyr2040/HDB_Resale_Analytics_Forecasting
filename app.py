@@ -308,6 +308,29 @@ with tab2:
             fig_school_bar.update_traces(textposition="outside")
             fig_school_bar.update_layout(showlegend=False)
             st.plotly_chart(fig_school_bar, use_container_width=True)
+        
+        # Malls proximity analysis
+        st.markdown("---")
+        st.subheader("Shopping Malls Proximity Analysis")
+        
+        # Render the Plotly scatter plot directly in the main layout (1 column)
+        fig_malls_scatter = px.scatter(
+            filtered_df,
+            x="dist_to_closest_shopping_mall_km",
+            y="resale_price",
+            color="town",
+            trendline="ols",
+            hover_data=["flat_type", "remaining_lease_years"],
+            labels={
+                "dist_to_closest_shopping_mall_km": "Distance to Closest Shopping Mall (km)",
+                "resale_price": "Resale Price ($)"
+            },
+            title="Resale Price vs. Distance to Closest Shopping Mall"
+        )
+        
+        st.plotly_chart(fig_malls_scatter, use_container_width=True)
+
+        
 
     else:
         st.caption("No vector parameters to isolate.")
