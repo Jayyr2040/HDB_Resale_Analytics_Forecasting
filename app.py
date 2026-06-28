@@ -25,6 +25,31 @@ st.title("🏢 HDB Resale Analytics Portal")
 st.caption("Data Engineering Core Pipeline | Live Production Environment ")
 st.markdown("---")
 
+# --- PRODUCTION ARTIFACT PATH RESOLUTION ENGINE ---
+# Dynamically establishes root paths for model deployment on Streamlit Cloud
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(BASE_DIR, "output", "hdb_histgb_model.pkl")
+grid_path = os.path.join(BASE_DIR, "output", "hdb_lookup_grid.pkl")
+
+hgb_model = None
+hdb_lookup_grid = None
+
+# Securely read serialized model binaries out of repository root space
+if os.path.exists(model_path) and os.path.exists(grid_path):
+    with open(model_path, "rb") as f:
+        hgb_model = pickle.load(f)
+    with open(grid_path, "rb") as f:
+        hdb_lookup_grid = pickle.load(f)
+else:
+    # Local fallback for notebook directory alignment backtracks
+    local_m_path = os.path.abspath(os.path.join(BASE_DIR, "../../../output/hdb_histgb_model.pkl"))
+    local_g_path = os.path.abspath(os.path.join(BASE_DIR, "../../../output/hdb_lookup_grid.pkl"))
+    if os.path.exists(local_m_path) and os.path.exists(local_g_path):
+        with open(local_m_path, "rb") as f:
+            hgb_model = pickle.load(f)
+        with open(local_g_path, "rb") as f:
+            hdb_lookup_grid = pickle.load(f)
+
 # =====================================================================================
 # 2. DATA WAREHOUSE CONNECTION & CACHING LAYER (SQLALCHEMY BIGQUERY Engine)
 # =====================================================================================
@@ -82,8 +107,7 @@ def get_bigquery_engine():
 @st.cache_data(ttl=3600)  # Cache invalidates auto-refreshing once every hour
 def fetch_analytics_mart_data(limit_years=None):
     """Streams analytics tables directly out of BigQuery, reading keys dynamically from cloud or local."""
-    import json
-    from google.oauth2 import service_account
+ 
     
     project_id = "project-8d552288-1acb-4a23-893"
     
