@@ -81,11 +81,29 @@ def get_bigquery_engine():
 
 @st.cache_data(ttl=3600)  # Cache invalidates auto-refreshing once every hour
 def fetch_analytics_mart_data(limit_years=None):
-    """
-    Executes server-side partitioned data pull from the analytical star schema.
-    Keeps memory footprint lean by applying chronological constraints dynamically.
-    """
-    engine = get_bigquery_engine()
+    """Streams analytics tables directly out of BigQuery, reading keys dynamically from cloud or local."""
+    import json
+    from google.oauth2 import service_account
+    
+    project_id = "project-8d552288-1acb-4a23-893"
+    
+    # 1. CLOUD LAYER CHECK: Detect if hosted live inside Streamlit Community Cloud
+    if "gcp_service_account" in st.secrets:
+        # Reconstruct dict from Streamlit secrets encrypted keys vault
+        gcp_dict = dict(st.secrets["gcp_service_account"])
+        credentials = service_account.Credentials.from_service_account_info(gcp_dict)
+        engine = create_engine(f"bigquery://{project_id}/hdb_analytics_marts", credentials_info=gcp_dict)
+        
+    # 2. LOCAL DEV FALLBACK: Read from local storage workspace folder path if on your computer
+    else:
+        local_path = "/home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json"
+        if os.path.exists(local_path):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_path
+            engine = create_engine(f"bigquery://{project_id}/hdb_analytics_marts")
+        else:
+            st.error("Failed to fetch infrastructure layers from Cloud Warehouse: No BigQuery credentials found locally or in Streamlit Secrets.")
+            return pd.DataFrame()
+            
 
     # Base query extracting from fact and dimension table joined together
     base_query = """
