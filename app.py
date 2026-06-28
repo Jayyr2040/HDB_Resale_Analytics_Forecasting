@@ -6,6 +6,8 @@ from sqlalchemy import create_engine
 from google.oauth2 import service_account
 from dotenv import load_dotenv
 import json
+import pickle
+import numpy as np
 
 # =====================================================================================
 # 1. APPLICATION SETUP & PAGE CONFIGURATION
@@ -102,7 +104,9 @@ def fetch_analytics_mart_data(limit_years=None):
         f.storey_range,
         f.flat_type,
         p.town,
-        p.flat_model
+        p.flat_model,
+        p.street_name, 
+        p.block
     FROM fact_sales f
     LEFT JOIN dim_properties p ON f.property_id = p.property_id
     """
@@ -124,6 +128,27 @@ def fetch_analytics_mart_data(limit_years=None):
     if "transaction_month" in df.columns:
         df['transaction_month'] = pd.to_datetime(df['transaction_month'])
     return df
+
+# ==============================================================================
+# 2.5 ML MODEL CACHED LOADING LAYER
+# ==============================================================================
+@st.cache_resource
+def load_ml_forecasting_assets():
+    """Loads binary pkl assets compiled by your automated Dagster asset pipeline."""
+    # Matches your project's local /output structure perfectly
+    model_path = os.path.join("output", "hdb_histgb_model.pkl")
+    grid_path = os.path.join("output", "hdb_lookup_grid.pkl")
+    
+    try:
+        with open(model_path, "rb") as f:
+            model = pickle.load(f)
+        with open(grid_path, "rb") as f:
+            grid = pickle.load(f)
+        return model, grid
+    except FileNotFoundError:
+        return None, None
+
+hgb_model, hdb_lookup_grid = load_ml_forecasting_assets()
 
 # ==============================================================================
 # 3. SIDEBAR NAVIGATION & DATA LAKE WINDOW CONTROL 
@@ -207,10 +232,12 @@ st.markdown("---")
 # ==============================================================================
 # 5. ENTERPRISE MULTI-TAB ANALYTICS MATRIX INTERFACE
 # ==============================================================================
-tab1,tab2, tab3 = st.tabs([
-    "📈 Temporal Price Trajectories", 
-    "🧭 Geospatial Proximity Elasticiy",
-    "🏢 Vertical Storey Premium Index"
+# Update your multi-tab definition line to include a 4th index:
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📈 Temporal Price Trajectories",
+    "🧭 Geospatial Proximity Elasticity",
+    "🏢 Vertical Storey Premium Index",
+    "🔮 Time-Aware ML Price Forecaster"  # <-- Paste this 4th item here
 ])
 
 # ---- TAB 1: FINANCIAL TRENDS TIMELINE ----
@@ -380,6 +407,143 @@ with tab3:
         
     else:
         st.warning("No data available for the selected filters.")
+
+# ==============================================================================
+# ---- TAB 4: PRODUCTION ML ENGINE WITH AUTOMATIC OVERRIDE STATES ----
+# ==============================================================================
+with tab4:
+    st.subheader("🔮 Predictive Fair Valuation Baseline Engine")
+    
+    if hgb_model is None or hdb_lookup_grid is None:
+        st.warning("⚠️ **Predictive Module Offline:** Please materialize your assets in Dagster first.")
+    else:
+        st.markdown("Select the property address. The engine will auto-populate historical timeline attributes, which you can override manually.")
+        st.markdown("---")
+        
+        ml_col1, ml_col2 = st.columns(2)
+        
+        with ml_col1:
+            st.markdown("##### 📍 Address & Location Profile")
+            all_warehouse_towns = sorted(master_df['town'].dropna().unique())
+            input_town = st.selectbox("Target Town Location", all_warehouse_towns, key="ml_town")
+            
+            town_filtered_df = master_df[master_df['town'] == input_town]
+            available_streets = sorted(town_filtered_df['street_name'].dropna().unique()) if not town_filtered_df.empty else []
+            input_street = st.selectbox("Select Street Name", available_streets, key="ml_street")
+            
+            street_filtered_df = town_filtered_df[town_filtered_df['street_name'] == input_street] if available_streets else pd.DataFrame()
+            available_blocks = sorted(street_filtered_df['block'].dropna().unique(), key=lambda x: str(x)) if not street_filtered_df.empty else []
+            input_block = st.selectbox("Select Block Number", available_blocks, key="ml_block")
+            
+            all_warehouse_types = sorted(master_df['flat_type'].dropna().unique())
+            input_flat_type = st.selectbox("Flat Unit Size Type", all_warehouse_types, key="ml_type")
+            
+            all_warehouse_models = sorted(master_df['flat_model'].dropna().unique())
+            input_flat_model = st.selectbox("Architectural Flat Model Variant", all_warehouse_models, key="ml_model")
+
+        # --- BACKGROUND LOOKUP SELECTION INTERCEPTOR ---
+        # Look up the actual record *before* rendering the numeric inputs to set the default values
+        matched_subset = master_df[
+            (master_df['town'] == input_town) & 
+            (master_df['street_name'] == input_street) & 
+            (master_df['block'] == input_block)
+        ]
+        if matched_subset.empty:
+            matched_subset = master_df[(master_df['town'] == input_town) & (master_df['flat_type'] == input_flat_type)]
+
+        if not matched_subset.empty:
+            latest_real_record = matched_subset.sort_values('transaction_month', ascending=False).iloc[0]
+            db_lease = float(latest_real_record["remaining_lease_years"]) if "remaining_lease_years" in latest_real_record else 85.0
+            db_area = float(latest_real_record["floor_area_sqm"]) if "floor_area_sqm" in latest_real_record else 95.0
+            db_floor = int(latest_real_record["storey_range"].split(" ")[0]) if ("storey_range" in latest_real_record and "TO" in str(latest_real_record["storey_range"])) else 8
+        else:
+            db_lease, db_area, db_floor = 85.0, 95.0, 8
+
+        with ml_col2:
+            st.markdown("##### 📏 Physical Layout Parameters (Auto-Populated)")
+            # Passing the database value as the baseline default value parameter
+            input_area = st.number_input("Floor Area Space (Square Meters)", min_value=30.0, max_value=170.0, value=db_area, step=1.0)
+            input_floor = st.number_input("Storey Level Height (Exact Floor Number)", min_value=1, max_value=50, value=db_floor, step=1)
+            
+            # The remaining lease slider automatically snaps to the database value but can be adjusted manually
+            input_lease = st.slider(
+            "Remaining Lease Life Duration (Years)", 
+            min_value=40.0, 
+            max_value=99.0, 
+            value=db_lease, 
+            step=0.5,
+            key=f"lease_slider_{input_town}_{input_street}_{input_block}" # <-- Paste this unique key here
+            )
+      
+        st.markdown("---")
+        # Scroll down to your button handler inside Tab 4 of your app.py file:
+        if st.button("🚀 Calculate Live Future Valuation Frame", use_container_width=True):
+            with st.spinner("Executing model prediction loop..."):
+                
+                # Pull latest database entry for the proximity constants matching the address
+                if not matched_subset.empty:
+                    latest_real_record = matched_subset.sort_values('transaction_month', ascending=False).iloc[0]
+                    real_mrt    = float(latest_real_record["dist_to_closest_mrt_km"])
+                    real_lrt    = float(latest_real_record["dist_to_closest_lrt_km"])
+                    real_mall   = float(latest_real_record["dist_to_closest_shopping_mall_km"])
+                    real_school = float(latest_real_record["dist_to_closest_primary_school_km"])
+                    real_hub    = float(latest_real_record["min_distance_to_regional_hub_km"])
+                else:
+                    real_mrt, real_lrt, real_mall, real_school, real_hub = 0.55, 1.20, 0.65, 0.35, 4.50
+
+                # DYNAMIC LINK: Calculate lease commence year based directly on the slider's active choice
+                real_lease_commence = int(2026 - (99 - float(input_lease)))
+                floor_squared = float(input_floor ** 2)
+                mop_window_flush = 1 if (2026 - real_lease_commence >= 5 and 2026 - real_lease_commence <= 8) else 0
+                
+                # Pull baseline
+                baseline_lag_1 = hdb_lookup_grid.get((input_town, input_flat_type), 540000.0)
+                if isinstance(baseline_lag_1, dict):
+                    baseline_lag_1 = baseline_lag_1.get("lag_1_month", 540000.0)
+
+                # Assemble your 19-feature payload matrix
+                prediction_payload = pd.DataFrame([{
+                    "floor_area_sqm": float(input_area),
+                    "remaining_lease_numeric": float(input_lease),
+                    "floor_level": float(input_floor),
+                    "floor_squared": floor_squared,
+                    "lease_commence_date": float(real_lease_commence),
+                    "lag_1_month": float(baseline_lag_1),
+                    "lag_12_month": float(baseline_lag_1 * 0.92),
+                    "rpi_lag_1": 204.1,                  
+                    "mop_window_flush": int(mop_window_flush),
+                    "transaction_year": 2026,            
+                    "transaction_month_num": 6,          
+                    "dist_to_closest_mrt_km": real_mrt,
+                    "dist_to_closest_lrt_km": real_lrt,
+                    "dist_to_closest_shopping_mall_km": real_mall,
+                    "dist_to_closest_primary_school_km": real_school,
+                    "min_distance_to_regional_hub_km": real_hub,
+                    "town": input_town,
+                    "flat_type": input_flat_type,
+                    "flat_model": input_flat_model
+                }])
+                
+                for col in prediction_payload.columns:
+                    if col not in ["town", "flat_type", "flat_model"]:
+                        prediction_payload[col] = prediction_payload[col].astype('float32')
+                for categorical_column in ["town", "flat_type", "flat_model"]:
+                    prediction_payload[categorical_column] = prediction_payload[categorical_column].astype('category')
+                    
+                # E. Run prediction and target reconstruction
+                predicted_stationary_delta = hgb_model.predict(prediction_payload)
+                final_calculated_valuation = float(predicted_stationary_delta[0] + baseline_lag_1)
+                
+                # F. Display output cards
+                st.markdown("### 🔑 Valuation Matrix Analysis Result")
+                res_col1, res_col2 = st.columns(2)
+                with res_col1:
+                    st.success(f"#### Estimated Fair Market Value\n## **S${final_calculated_valuation:,.2f}**")
+                with res_col2:
+                    st.info(f"#### Local Sub-Market Moving Baseline\n## **S${baseline_lag_1:,.0f}**")
+                    st.caption(f"Based on real database records for **Blk {input_block} {input_street}**.")
+
+
 
 # ==============================================================================
 # 6. RAW ARCHIVE DATASET DATA FRAME CHECKBOX INSPECTION
