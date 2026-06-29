@@ -108,27 +108,13 @@ def get_bigquery_engine():
 def fetch_analytics_mart_data(limit_years=None):
     """Streams analytics tables directly out of BigQuery, reading keys dynamically from cloud or local."""
  
-    
-    project_id = "project-8d552288-1acb-4a23-893"
-    
-    # 1. CLOUD LAYER CHECK: Detect if hosted live inside Streamlit Community Cloud
-    if "gcp_service_account" in st.secrets:
-        # Reconstruct dict from Streamlit secrets encrypted keys vault
-        gcp_dict = dict(st.secrets["gcp_service_account"])
-        credentials = service_account.Credentials.from_service_account_info(gcp_dict)
-        engine = create_engine(f"bigquery://{project_id}/hdb_analytics_marts", credentials_info=gcp_dict)
-        
-    # 2. LOCAL DEV FALLBACK: Read from local storage workspace folder path if on your computer
-    else:
-        local_path = "/home/taijl/DSAI/S2_BigData/DSAI_HDB_Project/project-8d552288-1acb-4a23-893-07fe8627d11f.json"
-        if os.path.exists(local_path):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_path
-            engine = create_engine(f"bigquery://{project_id}/hdb_analytics_marts")
-        else:
-            st.error("Failed to fetch infrastructure layers from Cloud Warehouse: No BigQuery credentials found locally or in Streamlit Secrets.")
-            return pd.DataFrame()
+    try:
+        # INDUSTRIAL REFACTOR: Leverage your working engine connection directly
+        engine = get_bigquery_engine()
+    except Exception as e:
+        st.error(f"Data Pipeline Engine Connection Error: {str(e)}")
+        return pd.DataFrame()
             
-
     # Base query extracting from fact and dimension table joined together
     base_query = """
      SELECT 
@@ -459,7 +445,7 @@ with tab4:
     if hgb_model is None or hdb_lookup_grid is None:
         st.warning("⚠️ **Predictive Module Offline:** Please materialize your assets in Dagster first.")
     else:
-        st.markdown("Select the property address. The engine will auto-populate historical timeline attributes, which you can override manually.")
+        st.markdown("Select or type the property parameters below. The system automatically fetches database metrics for known addresses, while allowing immediate manual overrides.")
         st.markdown("---")
         
         ml_col1, ml_col2 = st.columns(2)
@@ -469,45 +455,115 @@ with tab4:
             all_warehouse_towns = sorted(master_df['town'].dropna().unique())
             input_town = st.selectbox("Target Town Location", all_warehouse_towns, key="ml_town")
             
-            town_filtered_df = master_df[master_df['town'] == input_town]
-            available_streets = sorted(town_filtered_df['street_name'].dropna().unique()) if not town_filtered_df.empty else []
-            input_street = st.selectbox("Select Street Name", available_streets, key="ml_street")
+            # --- 1. SMART STREET NAME FIELD ---
+            all_town_streets = sorted(master_df[master_df['town'] == input_town]['street_name'].dropna().unique())
+            street_options = ["➕ Type Custom Street Name..."] + all_town_streets
             
-            street_filtered_df = town_filtered_df[town_filtered_df['street_name'] == input_street] if available_streets else pd.DataFrame()
-            available_blocks = sorted(street_filtered_df['block'].dropna().unique(), key=lambda x: str(x)) if not street_filtered_df.empty else []
-            input_block = st.selectbox("Select Block Number", available_blocks, key="ml_block")
+            selected_street_ui = st.selectbox("Street Name", street_options, index=0, key="ml_street_select")
+            
+            if selected_street_ui == "➕ Type Custom Street Name...":
+                # Dynamically transforms into an open text field if clicked
+                input_street = st.text_input("Type Custom Street Name", value="", placeholder="e.g. MONTREAL DR", key="ml_street_text").strip().upper()
+            else:
+                input_street = selected_street_ui
+
+            # --- 2. SMART BLOCK NUMBER FIELD ---
+            # Extract historical blocks matching our active town/street selection
+            filtered_blocks_df = master_df[(master_df['town'] == input_town) & (master_df['street_name'] == input_street)]
+            all_street_blocks = sorted(filtered_blocks_df['block'].dropna().unique(), key=lambda x: str(x)) if not filtered_blocks_df.empty else []
+            
+            block_options = ["➕ Type Custom Block Number..."] + all_street_blocks
+            selected_block_ui = st.selectbox("Block Number", block_options, index=0, key="ml_block_select")
+            
+            if selected_block_ui == "➕ Type Custom Block Number...":
+                # Dynamically transforms into an open text field if clicked
+                input_block = st.text_input("Type Custom Block Number", value="", placeholder="e.g. 588D", key="ml_block_text").strip().upper()
+            else:
+                input_block = selected_block_ui
             
             all_warehouse_types = sorted(master_df['flat_type'].dropna().unique())
             input_flat_type = st.selectbox("Flat Unit Size Type", all_warehouse_types, key="ml_type")
-            
-            all_warehouse_models = sorted(master_df['flat_model'].dropna().unique())
-            input_flat_model = st.selectbox("Architectural Flat Model Variant", all_warehouse_models, key="ml_model")
+
+
 
         # --- BACKGROUND LOOKUP SELECTION INTERCEPTOR ---
         # Look up the actual record *before* rendering the numeric inputs to set the default values
         matched_subset = master_df[
             (master_df['town'] == input_town) & 
             (master_df['street_name'] == input_street) & 
-            (master_df['block'] == input_block)
+            (master_df['block'] == input_block) &
+            (master_df['flat_type'] == input_flat_type)
         ]
-        if matched_subset.empty:
-            matched_subset = master_df[(master_df['town'] == input_town) & (master_df['flat_type'] == input_flat_type)]
+
+        # Robust helper function to extract lease year safely from any series row index
+        def extract_commence_year(row_series):
+            """Safely extracts the lease start year using transactional parameters."""
+            if "remaining_lease_years" in row_series.index:
+                tx_year = pd.to_datetime(row_series["transaction_month"]).year
+                rem_years = float(row_series["remaining_lease_years"])
+                return int(tx_year - (99 - rem_years))
+                
+            return 1977 # Safe historical fallback anchor for older estates
 
         if not matched_subset.empty:
             latest_real_record = matched_subset.sort_values('transaction_month', ascending=False).iloc[0]
-            db_lease = float(latest_real_record["remaining_lease_years"]) if "remaining_lease_years" in latest_real_record else 85.0
-            db_area = float(latest_real_record["floor_area_sqm"]) if "floor_area_sqm" in latest_real_record else 95.0
-            db_floor = int(latest_real_record["storey_range"].split(" ")[0]) if ("storey_range" in latest_real_record and "TO" in str(latest_real_record["storey_range"])) else 8
+            db_area = float(latest_real_record["floor_area_sqm"])
+            db_model = str(latest_real_record["flat_model"])
+            
+            # FIXED CRASH: Uses the unified helper function across the primary branch
+            commence_year = extract_commence_year(latest_real_record)
+            db_lease = float(99 - (2026 - commence_year))
+            db_floor = 8 
         else:
-            db_lease, db_area, db_floor = 85.0, 95.0, 8
+            # 2. SMART BLOCK FALLBACK: Scan for ANY transaction in this exact block to extract the true lease year
+            block_only_subset = master_df[
+                (master_df['town'] == input_town) & 
+                (master_df['street_name'] == input_street) & 
+                (master_df['block'] == input_block)
+            ]
+            
+            if not block_only_subset.empty:
+                latest_block_rec = block_only_subset.sort_values('transaction_month', ascending=False).iloc[0]
+                db_area = 65.0 if "3" in input_flat_type else (90.0 if "4" in input_flat_type else 110.0)
+                db_model = str(latest_block_rec["flat_model"])
+                
+                # FIXED CRASH: Uses the unified helper function across the block branch
+                commence_year = extract_commence_year(latest_block_rec)
+                db_lease = float(99 - (2026 - commence_year))
+                db_floor = 8
+            else:
+                # 3. GLOBAL TOWN FALLBACK: If the block is completely unrecorded
+                town_subset = master_df[(master_df['town'] == input_town) & (master_df['flat_type'] == input_flat_type)]
+                if not town_subset.empty:
+                    latest_town_rec = town_subset.sort_values('transaction_month', ascending=False).iloc[0]
+                    db_area = float(latest_town_rec["floor_area_sqm"])
+                    db_model = str(latest_town_rec["flat_model"])
+                    
+                    # FIXED CRASH: Uses the unified helper function across the town branch
+                    commence_year = extract_commence_year(latest_town_rec)
+                    db_lease = float(99 - (2026 - commence_year))
+                    db_floor = 8
+                else:
+                    db_lease, db_area, db_model, db_floor = 85.0, 95.0, "Improved", 8
+                
+        db_lease = max(40.0, min(99.0, db_lease))
 
+        with ml_col1:
+            # Render model variant input box - defaults to database, allows typing override natively!
+            all_warehouse_models = sorted(master_df['flat_model'].dropna().unique())
+            try:
+                model_default_idx = all_warehouse_models.index(db_model)
+            except ValueError:
+                model_default_idx = 0
+            input_flat_model = st.selectbox("Architectural Flat Model Variant", all_warehouse_models, index=model_default_idx, key="ml_model")
+        
         with ml_col2:
             st.markdown("##### 📏 Physical Layout Parameters (Auto-Populated)")
             # Passing the database value as the baseline default value parameter
             input_area = st.number_input("Floor Area Space (Square Meters)", min_value=30.0, max_value=170.0, value=db_area, step=1.0)
             input_floor = st.number_input("Storey Level Height (Exact Floor Number)", min_value=1, max_value=50, value=db_floor, step=1)
             
-            # The remaining lease slider automatically snaps to the database value but can be adjusted manually
+            # Slider handle automatically snaps to database baseline but remains fully adjustable
             input_lease = st.slider(
             "Remaining Lease Life Duration (Years)", 
             min_value=40.0, 
@@ -522,9 +578,30 @@ with tab4:
         if st.button("🚀 Calculate Live Future Valuation Frame", use_container_width=True):
             with st.spinner("Executing model prediction loop..."):
                 
+                # Check for exact location match coordinates mapping
+                matched_subset_predict = master_df[
+                    (master_df['town'] == input_town) & 
+                    (master_df['street_name'] == input_street) & 
+                    (master_df['block'] == input_block) &
+                    (master_df['flat_type'] == input_flat_type)
+                ]
+
+                if matched_subset_predict.empty:
+                    matched_subset_predict = master_df[
+                        (master_df['town'] == input_town) & 
+                        (master_df['street_name'] == input_street) & 
+                        (master_df['block'] == input_block)
+                    ]
+                    
+                if matched_subset_predict.empty:
+                    matched_subset_predict = master_df[
+                        (master_df['town'] == input_town) & 
+                        (master_df['flat_type'] == input_flat_type)
+                    ]
+
                 # Pull latest database entry for the proximity constants matching the address
-                if not matched_subset.empty:
-                    latest_real_record = matched_subset.sort_values('transaction_month', ascending=False).iloc[0]
+                if not matched_subset_predict.empty:
+                    latest_real_record = matched_subset_predict.sort_values('transaction_month', ascending=False).iloc[0]
                     real_mrt    = float(latest_real_record["dist_to_closest_mrt_km"])
                     real_lrt    = float(latest_real_record["dist_to_closest_lrt_km"])
                     real_mall   = float(latest_real_record["dist_to_closest_shopping_mall_km"])
@@ -552,8 +629,8 @@ with tab4:
                     "lease_commence_date": float(real_lease_commence),
                     "lag_1_month": float(baseline_lag_1),
                     "lag_12_month": float(baseline_lag_1 * 0.92),
-                    "rpi_lag_1": 204.1,                  
-                    "mop_window_flush": int(mop_window_flush),
+                    "rpi_lag_1": 204.1, 
+                    "mop_window_flush": int(mop_window_flush),                  
                     "transaction_year": 2026,            
                     "transaction_month_num": 6,          
                     "dist_to_closest_mrt_km": real_mrt,
