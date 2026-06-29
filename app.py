@@ -86,14 +86,22 @@ def get_bigquery_engine():
         connection_string = f"bigquery://{project_id}/hdb_analytics_marts"
         return create_engine(connection_string)
         
-    # 2. Cloud Environment Path via Streamlit Secrets (Fixes your Timeout Error)
-    elif "bigquery_credentials" in st.secrets:
-        # Load your secrets dict
+    # 2. STREAMLIT CLOUD ENVIRONMENT INTEGRATION LAYER
+    # Uses safe attribute extraction to pull credentials without TOML section formatting failures
+    elif hasattr(st, "secrets") and "bigquery_credentials" in st.secrets:
+        # Extract secret parameters natively using standard mapping routines
         creds_info = dict(st.secrets["bigquery_credentials"])
+
+        # If Streamlit proxies it as a custom Secrets object, downcast it cleanly to a dictionary
+        if hasattr(creds_info, "to_dict"):
+            creds_info = creds_info.to_dict()
+        else:
+            creds_info = dict(creds_info)
+
         project_id = creds_info.get("project_id")
         
         # Stringify the JSON credentials dictionary to pass into the engine configuration
-        creds_json_string = json.dumps(creds_info)
+        # creds_json_string = json.dumps(creds_info)
         
         # Pass the raw JSON string configuration directly as a dialect parameter string
         connection_string = f"bigquery://{project_id}/hdb_analytics_marts"
